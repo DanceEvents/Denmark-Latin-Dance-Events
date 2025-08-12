@@ -1,0 +1,204 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 const WEEKDAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];\
+const STYLES = ["salsa","bachata","kizomba"];\
+const qs = (s, r=document)=>r.querySelector(s);\
+const qsa = (s, r=document)=>Array.from(r.querySelectorAll(s));\
+\
+const state = \{\
+  events: [],\
+  view: "month",\
+  cursor: new Date(),\
+  filters: \{\
+    date: "",\
+    location: "",\
+    styles: new Set(STYLES),\
+    search: ""\
+  \}\
+\};\
+\
+document.addEventListener("DOMContentLoaded", async () => \{\
+  qs("#viewMode").addEventListener("change", e => \{ state.view = e.target.value; syncURL(); render(); \});\
+  qs("#prevBtn").addEventListener("click", () => \{ shiftPeriod(-1); \});\
+  qs("#nextBtn").addEventListener("click", () => \{ shiftPeriod(+1); \});\
+  qs("#resetBtn").addEventListener("click", resetFilters);\
+  qs("#icsBtn").addEventListener("click", downloadICS);\
+\
+  qs("#dateFilter").addEventListener("change", e => \{ state.filters.date = e.target.value ?? ""; syncURL(); render(); \});\
+  qs("#locationFilter").addEventListener("change", e => \{ state.filters.location = e.target.value ?? ""; syncURL(); render(); \});\
+  qsa(".typeFilter").forEach(chk => chk.addEventListener("change", () => \{\
+    const v = new Set();\
+    qsa(".typeFilter").forEach(c => \{ if (c.checked) v.add(c.value); \});\
+    state.filters.styles = v;\
+    syncURL(); render();\
+  \}));\
+  qs("#searchFilter").addEventListener("input", e => \{ state.filters.search = e.target.value.trim(); syncURL(); render(); \});\
+\
+  await loadEvents();\
+  hydrateFiltersFromURL();\
+  populateLocations();\
+  render();\
+\});\
+\
+async function loadEvents() \{\
+  try \{\
+    const res = await fetch("events.json", \{ cache: "no-store" \});\
+    if (!res.ok) throw new Error("Failed to load events.json");\
+    const data = await res.json();\
+    state.events = data.map((e, idx) => (\{\
+      id: e.id ?? `ev-$\{idx\}`,\
+      title: e.title,\
+      style: (e.style || "").toLowerCase(),\
+      city: e.city,\
+      venue: e.venue || "",\
+      address: e.address || "",\
+      start: e.start,\
+      end: e.end || e.start,\
+      price: e.price || "",\
+      url: e.url || "",\
+      org: e.organizer || "",\
+      notes: e.notes || ""\
+    \})).sort((a,b) => new Date(a.start) - new Date(b.start));\
+  \} catch (err) \{\
+    console.error(err);\
+    state.events = [];\
+  \}\
+\}\
+\
+function populateLocations() \{\
+  const sel = qs("#locationFilter");\
+  const cities = [...new Set(state.events.map(e => e.city).filter(Boolean))].sort((a,b)=>a.localeCompare(b));\
+  for (const c of cities) \{\
+    const opt = document.createElement("option");\
+    opt.value = c;\
+    opt.textContent = c;\
+    sel.appendChild(opt);\
+  \}\
+  if (state.filters.location) sel.value = state.filters.location;\
+\}\
+\
+function shiftPeriod(delta) \{\
+  if (state.view === "month") \{\
+    state.cursor.setMonth(state.cursor.getMonth() + delta);\
+  \} else \{\
+    state.cursor.setFullYear(state.cursor.getFullYear() + delta);\
+  \}\
+  syncURL();\
+  render();\
+\}\
+\
+function resetFilters() \{\
+  qs("#dateFilter").value = "";\
+  qs("#locationFilter").value = "";\
+  qs("#searchFilter").value = "";\
+  qsa(".typeFilter").forEach(c => c.checked = true);\
+  state.filters = \{ date:"", location:"", styles:new Set(STYLES), search:"" \};\
+  state.view = "month";\
+  qs("#viewMode").value = "month";\
+  state.cursor = new Date();\
+  syncURL();\
+  render();\
+\}\
+\
+function render() \{\
+  const periodLabel = qs("#periodLabel");\
+  const container = qs("#calendarContainer");\
+  container.innerHTML = "";\
+  qs("#listContainer").hidden = true;\
+\
+  if (state.view === "month") \{\
+    const year = state.cursor.getFullYear();\
+    const month = state.cursor.getMonth();\
+    periodLabel.textContent = `$\{state.cursor.toLocaleString('en-GB', \{ month:'long' \})\} $\{year\}`;\
+    renderMonth(container, year, month);\
+  \} else \{\
+    const year = state.cursor.getFullYear();\
+    periodLabel.textContent = `$\{year\}`;\
+    renderYear(container, year);\
+  \}\
+\}\
+\
+function renderMonth(container, year, monthIndex) \{\
+  const wrap = document.createElement("div");\
+  wrap.className = "month-grid";\
+\
+  for (const wd of WEEKDAYS) \{\
+    const el = document.createElement("div");\
+    el.className = "weekday";\
+    el.textContent = wd;\
+    wrap.appendChild(el);\
+  \}\
+\
+  const firstOfMonth = new Date(year, monthIndex, 1);\
+  let startOffset = (firstOfMonth.getDay() + 6) % 7; // Monday-first\
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();\
+  const prevMonthDays = new Date(year, monthIndex, 0).getDate();\
+\
+  const totalCells = 42;\
+  const todayStr = toISODate(new Date());\
+\
+  for (let cell = 0; cell < totalCells; cell++) \{\
+    const dayEl = document.createElement("div");\
+    dayEl.className = "day";\
+    let dateObj;\
+    if (cell < startOffset) \{\
+      const dayNum = prevMonthDays - startOffset + cell + 1;\
+      dateObj = new Date(year, monthIndex - 1, dayNum);\
+      dayEl.classList.add("outside");\
+    \} else if (cell >= startOffset + daysInMonth) \{\
+      const dayNum = cell - (startOffset + daysInMonth) + 1;\
+      dateObj = new Date(year, monthIndex + 1, dayNum);\
+      dayEl.classList.add("outside");\
+    \} else \{\
+      const dayNum = cell - startOffset + 1;\
+      dateObj = new Date(year, monthIndex, dayNum);\
+    \}\
+\
+    const iso = toISODate(dateObj);\
+    if (iso === todayStr) dayEl.classList.add("today");\
+\
+    const header = document.createElement("div");\
+    header.className = "day-header";\
+    const num = document.createElement("div");\
+    num.className = "day-num";\
+    num.textContent = dateObj.getDate();\
+    header.appendChild(num);\
+    dayEl.appendChild(header);\
+\
+    const dayEvents = getFilteredEvents().filter(ev => ev.start.startsWith(iso));\
+    for (const ev of dayEvents) \{\
+      const evEl = document.createElement("div");\
+      evEl.className = `event $\{ev.style\}`;\
+      evEl.textContent = ev.title;\
+      evEl.title = `$\{ev.title\} - $\{new Date(ev.start).toLocaleTimeString([], \{hour:'2-digit',minute:'2-digit'\})\}`;\
+      evEl.addEventListener("click", () => showEvent(ev));\
+      dayEl.appendChild(evEl);\
+    \}\
+\
+    wrap.appendChild(dayEl);\
+  \}\
+\
+  container.appendChild(wrap);\
+\}\
+\
+function renderYear(container, year) \{\
+  const grid = document.createElement("div");\
+  grid.className = "year-grid";\
+\
+  for (let m = 0; m < 12; m++) \{\
+    const card = document.createElement("div");\
+    card.className = "year-card";\
+    const h3 = document.createElement("h3");\
+    h3.textContent = new Date(year, m, 1).toLocaleString('en-GB', \{ month:'long' \});\
+    card.appendChild(h3);\
+\
+    const monthWrap = document.createElement("div");\
+    monthWrap.className = "month-grid";\
+\
+    for (const wd of WEEKDAYS)\
+}
